@@ -1,0 +1,17 @@
+diff --git a/lib/solvers/LayoutPipelineSolver/LayoutPipelineSolver.ts b/lib/solvers/LayoutPipelineSolver/LayoutPipelineSolver.ts
+index 8754979..38170db 100644
+--- a/lib/solvers/LayoutPipelineSolver/LayoutPipelineSolver.ts
++++ b/lib/solvers/LayoutPipelineSolver/LayoutPipelineSolver.ts
+@@ -276,7 +276,11 @@ export class LayoutPipelineSolver extends BaseSolver {
+   }
+ 
+   solveUntilPhase(phase: string) {
+-    while (this.getCurrentPhase() !== phase) {
++    while (
++      !this.solved &&
++      !this.failed &&
++      this.getCurrentPhase() !== phase
++    ) {
+       this.step()
+     }
+   }
