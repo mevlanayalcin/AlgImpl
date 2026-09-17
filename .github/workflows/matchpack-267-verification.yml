@@ -39,6 +39,15 @@ jobs:
       - name: Install dependencies with lifecycle scripts disabled
         working-directory: upstream
         run: bun install --ignore-scripts
+      - name: Initialize only sharp native dependency and check it loads
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          node -e 'const p = require("./node_modules/sharp/package.json"); console.log(JSON.stringify({name:p.name,version:p.version,scripts:p.scripts},null,2)); if(p.name!=="sharp") process.exit(1)'
+          timeout 150s npm rebuild sharp --foreground-scripts --ignore-scripts=false --no-audit --no-fund
+          bun -e 'console.log(require("sharp").versions)'
       - name: Baseline full repository tests
         id: baseline_suite
         continue-on-error: true
