@@ -41,7 +41,7 @@ class Estimator(BaseEstimator):
         # Integer shape/budget bookkeeping only; no unmetered array arithmetic.
         pairs = max(1, min(3 * width, budget // (50 * depth * width * width)))
         rng = fnp.random.default_rng(mlp.seed)
-        totals = fnp.zeros((depth, width), dtype=fnp.float64)
+        totals = [fnp.zeros(width, dtype=fnp.float64) for _ in range(depth)]
         radius = fnp.asarray(_RADII[width], dtype=fnp.float32)
         for start in range(0, pairs, width):
             block = min(width, pairs - start)
@@ -50,9 +50,9 @@ class Estimator(BaseEstimator):
             x = fnp.concatenate((q.T, -q.T), axis=0) * radius
             for layer, weight in enumerate(mlp.weights):
                 x = fnp.maximum(x @ weight, fnp.zeros((), dtype=fnp.float32))
-                totals[layer] += fnp.sum(x, axis=0, dtype=fnp.float64)
-        result = (totals / (2 * pairs)).astype(fnp.float32)
+                totals[layer] = fnp.add(totals[layer], fnp.sum(x, axis=0, dtype=fnp.float64))
+        rows = [(total / (2 * pairs)).astype(fnp.float32) for total in totals]
         # Exact first-layer mean for a centered Gaussian linear form.
         first = mlp.weights[0]
-        result[0] = fnp.sqrt(fnp.sum(first * first, axis=0)) * _INV_SQRT_2PI
-        return result
+        rows[0] = (fnp.sqrt(fnp.sum(first * first, axis=0)) * _INV_SQRT_2PI).astype(fnp.float32)
+        return fnp.stack(rows, axis=0)
