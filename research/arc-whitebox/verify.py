@@ -1,5 +1,6 @@
-"""External verification harness, never included in the estimator submission.
+"""External verification harness, never included in a submitted estimator.
 Reads only public data. Reference targets are never passed to predict().
+The hybrid formula is fixed before observing public rows 3, 4, and 5.
 """
 from __future__ import annotations
 import gc
@@ -72,14 +73,30 @@ def contract_tests():
 
 def public_probe():
     from datasets import load_dataset
-    from huggingface_hub import HfApi
-    info=HfApi().dataset_info("aicrowd/arc-whestbench-public-2026",revision="v2-phase2")
-    revision=info.sha
+    revision="aa99830fdc09fad15407b10e8e3459d3e18bba0a"
     print("PUBLIC_DATASET_REVISION",revision,flush=True)
     ds=load_dataset("aicrowd/arc-whestbench-public-2026",revision=revision,split="mini",streaming=True).with_format("numpy")
     covariance=load_example(sys.argv[2])
+
+    class FixedHybrid(BaseEstimator):
+        def predict(self, mlp, budget):
+            # Both full estimations and the combination are inside ONE meter.
+            # The covariance component is the unmodified organizer example,
+            # not our original contribution. No reference target is available here.
+            sampled=Estimator().predict(mlp,budget)
+            analytical=covariance().predict(mlp,budget)
+            return (sampled+analytical)*0.5
+
+    # Validate the composite contract on fresh tiny synthetic weights, too.
+    tiny_rng=np.random.default_rng(90210)
+    tiny=MLP(width=4,depth=2,weights=[fnp.asarray(tiny_rng.normal(0,math.sqrt(0.5),(4,4)).astype(np.float32)) for _ in range(2)],seed=2468)
+    tiny_prediction,tiny_info=measured(FixedHybrid(),tiny)
+    np.testing.assert_array_equal(tiny_prediction,measured(FixedHybrid(),tiny)[0])
+    np.testing.assert_allclose(tiny_prediction[0],np.linalg.norm(np.asarray(tiny.weights[0]),axis=0)/math.sqrt(2*math.pi),rtol=2e-6,atol=2e-6)
+    print("HYBRID_CONTRACT",json.dumps(tiny_info),flush=True)
+
     rows=[]
-    for idx,row in enumerate(ds.take(3)):
+    for idx,row in enumerate(ds.skip(3).take(3),start=3):
         print("PUBLIC_ROW_KEYS",sorted(row.keys()),flush=True)
         weights=np.asarray(row["weights"],dtype=np.float32)
         target=np.asarray(row["all_layer_means"],dtype=np.float32)
@@ -89,7 +106,7 @@ def public_probe():
         # Local reproducible test seed, NOT the official private rerun protocol.
         mlp=MLP(width=1024,depth=16,weights=[fnp.asarray(w) for w in weights],seed=17092026+idx)
         item={"index":idx,"name":str(row["mlp_name"]),"weights_sha256":weight_hash,"results":{}}
-        for name,cls in [("orthogonal_sphere",Estimator),("plain_mc",PlainMC),("official_covariance",covariance)]:
+        for name,cls in [("fixed_half_hybrid",FixedHybrid),("plain_mc",PlainMC),("official_covariance",covariance)]:
             pred,stats=measured(cls(),mlp)
             stats["final_layer_mse"]=float(np.mean((pred[-1].astype(np.float64)-target[-1])**2))
             stats["all_layer_mse"]=float(np.mean((pred.astype(np.float64)-target)**2))
@@ -97,7 +114,7 @@ def public_probe():
             item["results"][name]=stats
             print("MEASURED",json.dumps({"index":idx,"method":name,**stats}),flush=True)
         rows.append(item)
-        record={"dataset_revision":revision,"split":"mini","evaluated_count":len(rows),"official_submission":False,"rows":rows}
+        record={"dataset_revision":revision,"split":"mini","evaluated_count":len(rows),"row_indices":[3,4,5],"method":"fixed 50/50 combination chosen before these rows were evaluated","prior_exploration_indices":[0,1,2],"official_submission":False,"rows":rows}
         Path("public-probe-results.json").write_text(json.dumps(record,indent=2))
         print("ROW_RESULT",json.dumps(item),flush=True)
         del weights,target,mlp,row
