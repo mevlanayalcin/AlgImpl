@@ -1,0 +1,79 @@
+name: ARC package and submission attempt
+on:
+  push:
+    branches: [work/arc-submission-ready]
+    paths:
+      - submission-work/arc/**
+      - .github/workflows/arc-submission-ready.yml
+permissions: {}
+concurrency:
+  group: arc-submission-ready
+  cancel-in-progress: true
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      HARNESS_SHA: ${{ github.sha }}
+      STARTER_SHA: 5eb9aa1455fcb3216af55994bdf25dc242b95797
+      OPENBLAS_NUM_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      HF_HUB_DISABLE_TELEMETRY: '1'
+      WHEST_SKIP_HARDWARE_FALLBACK_PROBES: '1'
+    steps:
+      - name: Read pinned public sources without repository credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init harness
+          git -C harness fetch --depth=1 https://github.com/mevlanayalcin/AlgImpl.git "$HARNESS_SHA"
+          git -C harness checkout --detach FETCH_HEAD
+          git init starter
+          git -C starter fetch --depth=1 https://github.com/AIcrowd/whest-starterkit.git "$STARTER_SHA"
+          git -C starter checkout --detach FETCH_HEAD
+      - name: Install exact previously tested API versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/arc-venv"
+          "$RUNNER_TEMP/arc-venv/bin/pip" install --disable-pip-version-check --only-binary=:all: 'flopscope[server]==0.12.1' 'whestbench==0.16.1' 'numpy==2.4.6'
+          echo "$RUNNER_TEMP/arc-venv/bin" >> "$GITHUB_PATH"
+      - name: Assemble full hybrid and verify exact equivalence
+        run: timeout 180s python harness/submission-work/arc/build_and_check.py harness starter dist
+      - name: Run official estimator validator
+        run: timeout 90s whest validate --estimator dist/estimator.py
+      - name: Build official submission tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          whest package --estimator dist/estimator.py --output dist/submission.tar.gz
+          tar -tzf dist/submission.tar.gz
+          sha256sum dist/submission.tar.gz > dist/submission.sha256
+      - name: Attempt AIcrowd upload with available authentication
+        id: upload
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          timeout 20s whest submit dist/submission.tar.gz </dev/null > dist/submission-attempt.log 2>&1
+          code=$?
+          cat dist/submission-attempt.log
+          printf '{"command":"whest submit submission.tar.gz","exit_code":%s,"accepted_submission_id":null,"note":"Inspect response; package creation is not competition entry."}\n' "$code" > dist/submission-attempt.json
+          exit "$code"
+      - name: Retain small delivery archive for one day
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: arc-submission-ready
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 6
+      - name: Report packaging separately from platform acceptance
+        if: always()
+        env:
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          echo '## ARC delivery state' >> "$GITHUB_STEP_SUMMARY"
+          echo "Upload step outcome: $UPLOAD_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+          echo 'A successful packaging job does not mean AIcrowd accepted a submission. Check submission-attempt.log for the actual platform response and submission ID.' >> "$GITHUB_STEP_SUMMARY"
