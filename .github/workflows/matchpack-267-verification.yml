@@ -38,9 +38,7 @@ jobs:
           bun --revision
       - name: Install dependencies with lifecycle scripts disabled
         working-directory: upstream
-        run: |
-          bun install --ignore-scripts
-          bun pm ls
+        run: bun install --ignore-scripts
       - name: Baseline full repository tests
         id: baseline_suite
         continue-on-error: true
