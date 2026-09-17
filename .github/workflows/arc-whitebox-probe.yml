@@ -1,0 +1,68 @@
+name: ARC estimator bounded verification
+on:
+  push:
+    branches: [work/arc-whitebox-probe]
+    paths:
+      - research/arc-whitebox/**
+      - .github/workflows/arc-whitebox-probe.yml
+permissions: {}
+concurrency:
+  group: arc-whitebox-probe
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      HARNESS_SHA: ${{ github.sha }}
+      STARTER_SHA: 5eb9aa1455fcb3216af55994bdf25dc242b95797
+      OPENBLAS_NUM_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      HF_HUB_DISABLE_TELEMETRY: '1'
+      HF_HUB_DOWNLOAD_TIMEOUT: '60'
+      HF_HUB_ETAG_TIMEOUT: '30'
+      WHEST_SKIP_HARDWARE_FALLBACK_PROBES: '1'
+    steps:
+      - name: Read public source at fixed revisions without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init harness
+          git -C harness fetch --depth=1 https://github.com/mevlanayalcin/AlgImpl.git "$HARNESS_SHA"
+          git -C harness checkout --detach FETCH_HEAD
+          git init starter
+          git -C starter fetch --depth=1 https://github.com/AIcrowd/whest-starterkit.git "$STARTER_SHA"
+          git -C starter checkout --detach FETCH_HEAD
+          python3 --version
+      - name: Install official pinned packages from wheels in temporary environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/arc-venv"
+          "$RUNNER_TEMP/arc-venv/bin/pip" install --disable-pip-version-check --only-binary=:all: 'flopscope[server]==0.12.1' 'whestbench==0.16.1'
+          echo "$RUNNER_TEMP/arc-venv/bin" >> "$GITHUB_PATH"
+      - name: Validate metered contract, first-layer identity and deterministic seeds
+        id: contract
+        working-directory: harness/research/arc-whitebox
+        run: timeout 90s python verify.py contract
+      - name: Compare three public Phase 2 networks against two baselines
+        id: public_probe
+        working-directory: harness/research/arc-whitebox
+        run: timeout 420s python verify.py public ../../../starter/examples/03_covariance_propagation.py
+      - name: Record scope and actual outcomes
+        if: always()
+        env:
+          CONTRACT: ${{ steps.contract.outcome }}
+          PUBLIC_PROBE: ${{ steps.public_probe.outcome }}
+        shell: bash
+        run: |
+          {
+            echo '## ARC exploratory estimator verification'
+            echo "Contract checks: $CONTRACT"
+            echo "Three-network public probe: $PUBLIC_PROBE"
+            echo 'Only public inputs; independent verification, not an AIcrowd submission or official leaderboard score.'
+            echo 'No money transfer, secrets, deployment, artifact uploads or write-scoped token.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          test "$CONTRACT" = success
+          test "$PUBLIC_PROBE" = success
