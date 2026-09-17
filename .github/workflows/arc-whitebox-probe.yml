@@ -49,7 +49,7 @@ jobs:
       - name: Compare three public Phase 2 networks against two baselines
         id: public_probe
         working-directory: harness/research/arc-whitebox
-        run: timeout 420s python verify.py public ../../../../starter/examples/03_covariance_propagation.py
+        run: timeout 420s python verify.py public ../../../starter/examples/03_covariance_propagation.py
       - name: Record scope and actual outcomes
         if: always()
         env:
