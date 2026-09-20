@@ -10,9 +10,10 @@ concurrency:
   group: arc-auth-gated-20260921
   cancel-in-progress: false
 env:
-  # Keep false until the owner confirms challenge participation and a repository secret.
-  # Switching this to true is a separate, reviewed upload request. Never auto-retry uploads.
-  ARC_UPLOAD_ENABLED: 'false'
+  # The owner confirmed participation, the repository secret, and this upload.
+  # Only this exact commit message on its first run attempt may upload.
+  ARC_UPLOAD_ENABLED: 'true'
+  ARC_UPLOAD_COMMIT_MESSAGE: 'Submit ARC package once after owner confirmed participation and secret on 2026-09-21'
 jobs:
   package:
     runs-on: ubuntu-24.04
@@ -55,48 +56,13 @@ jobs:
           whest package --estimator dist/estimator.py --output dist/submission.tar.gz
           tar -tzf dist/submission.tar.gz
           sha256sum dist/submission.tar.gz > dist/submission.sha256
-          printf '%s\n' '{"state":"not_attempted","accepted_submission_id":null,"reason":"Upload is disabled until participation and secure authentication are confirmed."}' > dist/submission-attempt.json
-      - name: Submit once only after an explicit upload enablement
+          printf '%s\n' '{"state":"not_attempted","accepted_submission_id":null}' > dist/submission-attempt.json
+      - name: Submit once and verify the actual AIcrowd record
         id: upload
-        if: env.ARC_UPLOAD_ENABLED == 'true'
+        if: ${{ env.ARC_UPLOAD_ENABLED == 'true' && github.run_attempt == '1' && github.event.head_commit.message == env.ARC_UPLOAD_COMMIT_MESSAGE }}
         env:
           AICROWD_API_KEY: ${{ secrets.AICROWD_API_KEY }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import hashlib, json, os, re, subprocess
-          from pathlib import Path
-          output = Path('dist/submission-attempt.json')
-          receipt = {'state': 'not_attempted', 'accepted_submission_id': None,
-                     'archive_sha256': hashlib.sha256(Path('dist/submission.tar.gz').read_bytes()).hexdigest()}
-          if not os.environ.get('AICROWD_API_KEY', '').strip():
-              receipt['reason'] = 'AICROWD_API_KEY repository secret is missing; no upload command ran.'
-              output.write_text(json.dumps(receipt, indent=2))
-              raise SystemExit(receipt['reason'])
-          try:
-              result = subprocess.run(['whest', 'submit', 'dist/submission.tar.gz'],
-                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                  text=True, timeout=120, check=False)
-          except subprocess.TimeoutExpired:
-              receipt.update(state='unknown_after_timeout_do_not_retry', reason='Check AIcrowd before any retry.')
-              output.write_text(json.dumps(receipt, indent=2))
-              raise SystemExit('Upload timed out; outcome unknown. Do not automatically retry.')
-          text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', result.stdout)
-          # Allow-list public submission receipt URLs only. Never publish raw authentication output.
-          urls = sorted(set(re.findall(r'https://(?:www\.)?aicrowd\.com/challenges/arc-white-box-estimation-challenge-2026/submissions/[0-9]+', text)))
-          receipt.update(exit_code=result.returncode, receipt_urls=urls)
-          if result.returncode == 0 and urls:
-              receipt.update(state='cli_receipt_observed_platform_verification_required')
-          elif result.returncode == 0:
-              receipt.update(state='command_returned_zero_without_verified_receipt')
-          else:
-              receipt.update(state='command_failed_check_platform_before_retry')
-          output.write_text(json.dumps(receipt, indent=2))
-          print(json.dumps(receipt))
-          if result.returncode != 0 or not urls:
-              raise SystemExit('No verified successful receipt. Inspect the account before retrying; raw output was not published.')
-          PY
+        run: python harness/submission-tools/arc/submit_once_20260921.py
       - name: Retain only the public package and verification evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -112,5 +78,10 @@ jobs:
           UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
         run: |
           echo '## ARC delivery state' >> "$GITHUB_STEP_SUMMARY"
-          echo "Upload enabled: $ARC_UPLOAD_ENABLED; step outcome: $UPLOAD_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
-          echo 'Green packaging is not a competition submission. A CLI receipt is not a graded result, a prize or payment. Verify the submission in AIcrowd.' >> "$GITHUB_STEP_SUMMARY"
+          echo "Upload gate: $ARC_UPLOAD_ENABLED; step outcome: $UPLOAD_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Green packaging is not a competition submission. A submission record is not a prize or payment.' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f dist/submission-attempt.json ]; then
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat dist/submission-attempt.json >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
