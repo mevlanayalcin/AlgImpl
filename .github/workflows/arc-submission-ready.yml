@@ -1,18 +1,22 @@
-name: ARC package and submission attempt
+name: ARC verified package - upload separately gated
 on:
   push:
-    branches: [work/arc-submission-ready]
+    branches: [work/arc-auth-gated-20260921]
     paths:
       - submission-work/arc/**
       - .github/workflows/arc-submission-ready.yml
 permissions: {}
 concurrency:
-  group: arc-submission-ready
-  cancel-in-progress: true
+  group: arc-auth-gated-20260921
+  cancel-in-progress: false
+env:
+  # Keep false until the owner confirms challenge participation and a repository secret.
+  # Switching this to true is a separate, reviewed upload request. Never auto-retry uploads.
+  ARC_UPLOAD_ENABLED: 'false'
 jobs:
   package:
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 10
     env:
       HARNESS_SHA: ${{ github.sha }}
       STARTER_SHA: 5eb9aa1455fcb3216af55994bdf25dc242b95797
@@ -20,7 +24,6 @@ jobs:
       OMP_NUM_THREADS: '2'
       MKL_NUM_THREADS: '2'
       HF_HUB_DISABLE_TELEMETRY: '1'
-      WHEST_SKIP_HARDWARE_FALLBACK_PROBES: '1'
     steps:
       - name: Read pinned public sources without repository credentials
         shell: bash
@@ -40,34 +43,68 @@ jobs:
           "$RUNNER_TEMP/arc-venv/bin/pip" install --disable-pip-version-check --only-binary=:all: 'flopscope[server]==0.12.1' 'whestbench==0.16.1' 'numpy==2.4.6'
           echo "$RUNNER_TEMP/arc-venv/bin" >> "$GITHUB_PATH"
       - name: Assemble full hybrid and verify exact equivalence
-        run: timeout 180s python harness/submission-work/arc/build_and_check.py harness starter dist
+        run: timeout 240s python harness/submission-work/arc/build_and_check.py harness starter dist
+      - name: Verify the estimator is unchanged from the earlier tested delivery
+        run: echo '2a6745a94ee403b0e49c2372a95dea7c9a7b4684aaafdc7b7953ff57471154a7  dist/estimator.py' | sha256sum --check
       - name: Run official estimator validator
         run: timeout 90s whest validate --estimator dist/estimator.py
-      - name: Build official submission tarball
+      - name: Build official submission tarball without credentials
         shell: bash
         run: |
           set -euo pipefail
           whest package --estimator dist/estimator.py --output dist/submission.tar.gz
           tar -tzf dist/submission.tar.gz
           sha256sum dist/submission.tar.gz > dist/submission.sha256
-      - name: Attempt AIcrowd upload with available authentication
+          printf '%s\n' '{"state":"not_attempted","accepted_submission_id":null,"reason":"Upload is disabled until participation and secure authentication are confirmed."}' > dist/submission-attempt.json
+      - name: Submit once only after an explicit upload enablement
         id: upload
-        continue-on-error: true
+        if: env.ARC_UPLOAD_ENABLED == 'true'
+        env:
+          AICROWD_API_KEY: ${{ secrets.AICROWD_API_KEY }}
         shell: bash
         run: |
-          set +e
-          timeout 20s whest submit dist/submission.tar.gz </dev/null > dist/submission-attempt.log 2>&1
-          code=$?
-          cat dist/submission-attempt.log
-          printf '{"command":"whest submit submission.tar.gz","exit_code":%s,"accepted_submission_id":null,"note":"Inspect response; package creation is not competition entry."}\n' "$code" > dist/submission-attempt.json
-          exit "$code"
-      - name: Retain small delivery archive for one day
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, os, re, subprocess
+          from pathlib import Path
+          output = Path('dist/submission-attempt.json')
+          receipt = {'state': 'not_attempted', 'accepted_submission_id': None,
+                     'archive_sha256': hashlib.sha256(Path('dist/submission.tar.gz').read_bytes()).hexdigest()}
+          if not os.environ.get('AICROWD_API_KEY', '').strip():
+              receipt['reason'] = 'AICROWD_API_KEY repository secret is missing; no upload command ran.'
+              output.write_text(json.dumps(receipt, indent=2))
+              raise SystemExit(receipt['reason'])
+          try:
+              result = subprocess.run(['whest', 'submit', 'dist/submission.tar.gz'],
+                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                  text=True, timeout=120, check=False)
+          except subprocess.TimeoutExpired:
+              receipt.update(state='unknown_after_timeout_do_not_retry', reason='Check AIcrowd before any retry.')
+              output.write_text(json.dumps(receipt, indent=2))
+              raise SystemExit('Upload timed out; outcome unknown. Do not automatically retry.')
+          text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', result.stdout)
+          # Allow-list public submission receipt URLs only. Never publish raw authentication output.
+          urls = sorted(set(re.findall(r'https://(?:www\.)?aicrowd\.com/challenges/arc-white-box-estimation-challenge-2026/submissions/[0-9]+', text)))
+          receipt.update(exit_code=result.returncode, receipt_urls=urls)
+          if result.returncode == 0 and urls:
+              receipt.update(state='cli_receipt_observed_platform_verification_required')
+          elif result.returncode == 0:
+              receipt.update(state='command_returned_zero_without_verified_receipt')
+          else:
+              receipt.update(state='command_failed_check_platform_before_retry')
+          output.write_text(json.dumps(receipt, indent=2))
+          print(json.dumps(receipt))
+          if result.returncode != 0 or not urls:
+              raise SystemExit('No verified successful receipt. Inspect the account before retrying; raw output was not published.')
+          PY
+      - name: Retain only the public package and verification evidence
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: arc-submission-ready
+          name: arc-auth-gated-package
           path: dist/
-          if-no-files-found: error
-          retention-days: 1
+          if-no-files-found: warn
+          retention-days: 7
           compression-level: 6
       - name: Report packaging separately from platform acceptance
         if: always()
@@ -75,5 +112,5 @@ jobs:
           UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
         run: |
           echo '## ARC delivery state' >> "$GITHUB_STEP_SUMMARY"
-          echo "Upload step outcome: $UPLOAD_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
-          echo 'A successful packaging job does not mean AIcrowd accepted a submission. Check submission-attempt.log for the actual platform response and submission ID.' >> "$GITHUB_STEP_SUMMARY"
+          echo "Upload enabled: $ARC_UPLOAD_ENABLED; step outcome: $UPLOAD_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Green packaging is not a competition submission. A CLI receipt is not a graded result, a prize or payment. Verify the submission in AIcrowd.' >> "$GITHUB_STEP_SUMMARY"
