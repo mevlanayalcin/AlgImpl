@@ -1,0 +1,48 @@
+{
+  "record_kind": "Observed AIcrowd API-derived receipt from the completed GitHub Actions job; not an award or payment record",
+  "observed_at_utc": "2026-09-20T22:08:08.5637752Z",
+  "observed_at_turkey": "2026-09-21T01:08:08+03:00",
+  "source_run_id": 35540598288,
+  "source_job_id": 106157410642,
+  "source_run_url": "https://github.com/mevlanayalcin/AlgImpl/actions/runs/35540598288",
+  "source_job_url": "https://github.com/mevlanayalcin/AlgImpl/actions/runs/35540598288/job/106157410642",
+  "upload_commit_sha": "a02704c6cdb4b424c7677e5f1577264c6cc4e549",
+  "source_artifact_id": 10614786555,
+  "entrypoint_sha256": "2a6745a94ee403b0e49c2372a95dea7c9a7b4684aaafdc7b7953ff57471154a7",
+  "observed_receipt": {
+    "state": "platform_submission_record_verified",
+    "accepted_submission_id": 331695,
+    "archive_sha256": "9f2328c99211cbdd27743c2659fdfdb46f1e7ece60fff6700e64caeb79eaaeb7",
+    "automatic_upload_retry": false,
+    "identity_verified": true,
+    "eligibility": {
+      "submissions_allowed": true,
+      "rules_accepted": true,
+      "participation_terms_accepted": true
+    },
+    "exit_code": 0,
+    "receipt_urls": [],
+    "submission_url": "https://www.aicrowd.com/challenges/arc-white-box-estimation-challenge-2026/submissions/331695",
+    "platform_record_verified": true,
+    "grading_status": "submitted",
+    "status_checks": 10
+  },
+  "interpretation": {
+    "code_uploaded_and_platform_record_observed": true,
+    "graded_score_observed": false,
+    "leaderboard_rank_observed": false,
+    "final_submission_designation_performed": false,
+    "competition_writeup_uploaded": false,
+    "award_or_payment_observed": false,
+    "new_paid_service_purchased": false,
+    "authentication_secret_in_this_record": false
+  },
+  "verification_notes": [
+    "The CLI returned submission_id 331695 with exit code 0. No URL was emitted in its JSON output; the canonical URL was constructed from that ID.",
+    "Ten authenticated read-only API requests to that submission's status endpoint returned a platform record with grading_status_cd submitted. The record is not inferred merely from green CI.",
+    "The public webpage could not be accessed through the web tool; the verification above was performed using the repository secret inside the GitHub runner.",
+    "The real workflow rechecked equivalence on three synthetic shapes, the entrypoint checksum, official validation, and official packaging before uploading.",
+    "No automatic second upload was performed. Reruns are excluded by the workflow's one-shot guard.",
+    "The method note at research-results/arc-method-note-2026-09-21.md is a repository draft, not an AIcrowd write-up submission."
+  ]
+}
